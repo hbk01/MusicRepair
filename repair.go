@@ -3,36 +3,12 @@ package main
 import (
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/bogem/id3v2"
-	"github.com/headzoo/surf/errors"
-	"github.com/zmb3/spotify"
 )
 
-
-func RepairWorker(client spotify.Client, job <-chan string, results chan<- string) {
-	for filePath := range job {
-		_, fileName := filepath.Split(filePath)
-		results <- fmt.Sprintf("Fixing : %v\n", fileName)
-		if err := Repair(client, filePath); err != nil {
-			results <- fmt.Sprintf("Error : %v\n", err)
-		}
-	}
-}
-
-func RevertWorker(job <-chan string, results chan<- string) {
-	for filePath := range job {
-		_, fileName := filepath.Split(filePath)
-		results <- fmt.Sprintf("Reverting : %v\n", fileName)
-		if err := Revert(filePath); err != nil {
-			results <- fmt.Sprintf("Error : %v\n", err)
-		}
-	}
-}
-
-
+// Revert 删除元信息
 func Revert(path string) error {
 	tag, err := id3v2.Open(path, id3v2.Options{Parse: true})
 	if err != nil {
@@ -40,7 +16,16 @@ func Revert(path string) error {
 	}
 	defer tag.Close()
 
-	tag.DeleteAllFrames()
+	fmt.Println(path + "：")
+	fmt.Println("\t作者：", tag.Artist(), " -> ")
+	fmt.Println("\t标题：", tag.Title(), " -> ")
+	fmt.Println("\t专辑：", tag.Album(), " -> ")
+
+	tag.SetDefaultEncoding(id3v2.EncodingUTF16)
+	tag.SetTitle("")
+	tag.SetArtist("")
+	tag.SetAlbum("")
+
 	if err = tag.Save(); err != nil {
 		return err
 	}
@@ -48,44 +33,56 @@ func Revert(path string) error {
 	return nil
 }
 
-func Repair(client spotify.Client, path string) error {
+// Repair 修复一个音频文件
+func Repair(path string) error {
 	tag, err := id3v2.Open(path, id3v2.Options{Parse: true})
 	if err != nil {
 		return err
 	}
-
-	if CheckFrames(tag.AllFrames()) {
-		return errors.New("Already contains tags")
-	}
+	defer tag.Close()
 
 	_, filename := filepath.Split(path)
-	metadata, err := GetMetadata(client, filename[0:len(filename)-4])
-	if err != nil {
-		return err
-	}
+	metadata := GetMetadata(filename[0 : len(filename)-4])
 
+	fmt.Println(path + "：")
+	fmt.Println("\t作者：", tag.Artist(), " -> ", strings.Join(metadata.Artists, "、"))
+	fmt.Println("\t标题：", tag.Title(), " -> ", metadata.Title)
+	fmt.Println("\t专辑：", tag.Album(), " -> ", metadata.Album)
+
+	tag.SetDefaultEncoding(id3v2.EncodingUTF16)
 	tag.SetTitle(metadata.Title)
 	tag.SetAlbum(metadata.Album)
-	tag.SetArtist(strings.Join(metadata.Artists, ","))
+	tag.SetArtist(strings.Join(metadata.Artists, "、"))
 
-	TrackNumber := strconv.Itoa(metadata.TrackNumber)
-	tag.AddFrame("TRCK", id3v2.TextFrame{id3v2.EncodingUTF8, TrackNumber})
-
-	DiscNumber := strconv.Itoa(metadata.DiscNumber)
-	tag.AddFrame("TPOS", id3v2.TextFrame{id3v2.EncodingUTF8, DiscNumber})
-
-	pic := id3v2.PictureFrame{
-		Encoding:    id3v2.EncodingUTF8,
-		MimeType:    "image/jpeg",
-		PictureType: id3v2.PTFrontCover,
-		Description: "Front cover",
-		Picture:     metadata.Image,
-	}
-
-	tag.AddAttachedPicture(pic)
 	if err = tag.Save(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// GetMetadata 获取
+func GetMetadata(name string) (metadata Metadata) {
+	//Title   string   // 标题
+	//Artists []string // 艺术家
+	//Album   string   // 专辑
+
+	// for example:
+	//     aaa - bbb.mp3    -> aaa is artists, bbb is title
+	//     aaa、bbb - ccc.mp3  -> aaa and bbb is artists, ccc is title
+	s := strings.Split(name, "-")
+
+	title := strings.TrimSpace(s[1])
+	artists := strings.Split(s[0], "、")
+
+	for i, v := range artists {
+		artists[i] = strings.TrimSpace(v)
+	}
+
+	metadata = Metadata{
+		Title:   title,
+		Artists: artists,
+		Album:   title,
+	}
+	return metadata
 }
