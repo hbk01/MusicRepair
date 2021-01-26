@@ -31,3 +31,5 @@ _testmain.go
 
 # External packages folder
 vendor/
+
+*.mp3
